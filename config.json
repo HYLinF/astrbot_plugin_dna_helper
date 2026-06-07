@@ -1,0 +1,6 @@
+{
+  "enable_scheduled_push": true,
+  "whitelist_targets": [
+    "QQ_BOT:GroupMessage:674431711"
+  ]
+}

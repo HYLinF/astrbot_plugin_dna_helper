@@ -1,0 +1,9 @@
+name: astrbot_plugin_dna_helper
+display_name: 二重螺旋(DNA)密函委托推送
+version: 1.0.0
+author: HYLinF
+description: 二重螺旋插件 - 推送密函委托
+repo: https://github.com/HYLinF/astrbot_plugin_dna_helper
+  keywords:
+  - dna
+  - 二重螺旋
