@@ -1,0 +1,12 @@
+name: astrbot_plugin_dna_helper
+author: HYLinF
+version: 1.4.8
+description: 二重螺旋（DNA）密函委托定时推送插件
+repository: https://github.com/HYLinF/astrbot_plugin_dna_helper
+tags:
+  - 游戏
+  - 推送
+  - 二重螺旋
+  - DNA
+requires: []
+main: main.py
