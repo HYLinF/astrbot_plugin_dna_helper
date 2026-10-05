@@ -158,7 +158,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.1")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.2")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -285,7 +285,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.4.1" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.4.2" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))
@@ -483,6 +483,47 @@ async def show_via_group():
     return out
 shown = asyncio.run(show_via_group())
 check("智能适配-显示为群号", "222" in shown[0] and "GroupMessage" not in shown[0])
+
+# ---------- 12. 图片开关 + 文字生图 API 配置 ----------
+plugin10 = mod.DnaHelperPlugin(FakeContext())
+plugin10.config["whitelist_targets"] = ["g1"]
+# 12.1 图片推送关闭 → 跳过渲染，直接文本
+render_called = {"n": 0}
+async def spy_render(missions):
+    render_called["n"] += 1
+    return b"\x89PNG-fake"
+plugin10._render_missions_image = spy_render
+plugin10.config["enable_image_push"] = False
+plugin10.config["last_pushed_signature"] = ""
+plugin10._fetch_missions_from_api = fake_fetch
+ctx10_sent = []
+async def fake_send10(origin, msg):
+    ctx10_sent.append((origin, msg))
+    return True
+plugin10._send_message = fake_send10
+plugin10._send_image_message = lambda origin, png: False
+asyncio.run(plugin10._push_missions_to_whitelist())
+check("图片开关-关闭跳过渲染", render_called["n"] == 0 and len(ctx10_sent) == 1
+      and ctx10_sent[0][1].startswith("【密函委托更新】"))
+# 12.2 图片开关开启 + 渲染失败 → 文本回退（渲染被调用）
+render_called["n"] = 0
+plugin10.config["enable_image_push"] = True
+plugin10._render_missions_image = _mock_render_none
+plugin10.config["last_pushed_signature"] = ""
+ctx10_sent.clear()
+asyncio.run(plugin10._push_missions_to_whitelist())
+check("图片开关-渲染失败回退文本", render_called["n"] == 0 and len(ctx10_sent) == 1)
+# 12.3 文字生图 API 地址：留空回退官方默认
+plugin10.config["t2i_api_url"] = ""
+check("图片API-留空用默认", plugin10._t2i_url() == mod.T2I_URL)
+# 12.4 文字生图 API 地址：自填生效（含首尾空白清洗）
+plugin10.config["t2i_api_url"] = "  http://127.0.0.1:9999/generate  "
+check("图片API-自填生效", plugin10._t2i_url() == "http://127.0.0.1:9999/generate")
+# 12.5 配置归一化：非法类型回退默认
+with open(cfg_path, "w", encoding="utf-8") as f:
+    json.dump({"enable_image_push": "yes", "t2i_api_url": 123}, f)
+cfg12 = mod.load_config()
+check("图片配置-归一化", cfg12["enable_image_push"] is True and cfg12["t2i_api_url"] == "")
 
 # ---------- 清理 ----------
 if os.path.exists(cfg_path):

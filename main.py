@@ -33,7 +33,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.4.1"
+PLUGIN_VERSION = "2.4.2"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -44,6 +44,10 @@ CONFIG_FILE = os.path.join(PLUGIN_DIR, "config.json")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enable_scheduled_push": True,
+    # 图片推送开关：关闭时直接推送纯文字（T2I 不可用/渲染失败也会自动回退纯文字）
+    "enable_image_push": True,
+    # 文字生图 API 地址：留空使用 AstrBot 官方 astrbot-t2i-service 默认地址
+    "t2i_api_url": "",
     "whitelist_targets": [],
     # 最近一次成功推送的密函内容指纹，用于内容去重（由插件自动维护）
     "last_pushed_signature": "",
@@ -98,6 +102,12 @@ def _normalize_config(raw: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(config["enable_scheduled_push"], bool):
         config["enable_scheduled_push"] = DEFAULT_CONFIG["enable_scheduled_push"]
+
+    if not isinstance(config["enable_image_push"], bool):
+        config["enable_image_push"] = DEFAULT_CONFIG["enable_image_push"]
+
+    if not isinstance(config.get("t2i_api_url"), str):
+        config["t2i_api_url"] = ""
 
     targets = config["whitelist_targets"]
     if not isinstance(targets, list):
@@ -405,10 +415,14 @@ class DnaHelperPlugin(Star):
         if not targets:
             return 0
 
-        # 统一渲染一次图片；失败则全部目标走文本回退
-        png_bytes = await self._render_missions_image(missions_data)
-        if png_bytes is None:
-            logger.warning("T2I 图片渲染不可用，本次推送回退为文本消息")
+        # 图片推送开关：关闭时跳过渲染，直接推送纯文字
+        png_bytes = None
+        if self.config.get("enable_image_push", True):
+            png_bytes = await self._render_missions_image(missions_data)
+            if png_bytes is None:
+                logger.warning("T2I 图片渲染不可用，本次推送回退为文本消息")
+        else:
+            logger.info("图片推送已关闭，本次推送使用纯文字")
 
         success = 0
         for target in targets:
@@ -644,6 +658,11 @@ class DnaHelperPlugin(Star):
             "</body></html>"
         )
 
+    def _t2i_url(self) -> str:
+        """文字生图 API 地址：优先使用配置值，留空回退 AstrBot 官方默认。"""
+        custom = (self.config.get("t2i_api_url") or "").strip()
+        return custom or T2I_URL
+
     async def _render_missions_image(self, missions_data: list) -> Optional[bytes]:
         """调用 T2I 服务将 HTML 模板渲染为 PNG 图片；任何失败返回 None（由调用方回退文本）。"""
         beijing_time = datetime.now(timezone(timedelta(hours=8))).strftime(
@@ -665,7 +684,7 @@ class DnaHelperPlugin(Star):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    T2I_URL, json=payload, timeout=T2I_TIMEOUT
+                    self._t2i_url(), json=payload, timeout=T2I_TIMEOUT
                 ) as resp:
                     if resp.status != 200:
                         logger.warning(f"T2I 渲染失败: HTTP {resp.status}")

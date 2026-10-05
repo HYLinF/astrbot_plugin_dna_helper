@@ -4,6 +4,17 @@
     "type": "bool",
     "default": true
   },
+  "enable_image_push": {
+    "description": "图片推送开关（关闭时推送纯文字；开启但渲染失败也会自动回退纯文字）",
+    "type": "bool",
+    "default": true
+  },
+  "t2i_api_url": {
+    "description": "文字生图 API 地址（留空使用 AstrBot 官方默认）",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用 AstrBot 官方 astrbot-t2i-service 默认地址；若你自建了兼容的文字生图服务，可填写自己的 API 地址。"
+  },
   "whitelist_targets": {
     "description": "推送目标列表（直接填群号即可，如 123456789；也支持完整格式）",
     "type": "list",
