@@ -76,7 +76,11 @@ def fake_command(name, **kw):
         return fn
     return deco
 
-filter_mod = types.SimpleNamespace(command=fake_command)
+filter_mod = types.SimpleNamespace(
+    command=fake_command,
+    event_message_type=lambda t: (lambda fn: (setattr(fn, "_evt_type", t), fn)[1]),
+)
+filter_mod.EventMessageType = types.SimpleNamespace(ALL="ALL", GROUP="GROUP", PRIVATE="PRIVATE")
 
 astrbot_api = types.ModuleType("astrbot.api")
 astrbot_api.logger = logger
@@ -154,7 +158,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.0")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.1")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -281,7 +285,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.4.0" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.4.1" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))
@@ -439,6 +443,46 @@ with open(os.path.join(WORK_DIR, "_conf_schema.json"), encoding="utf-8") as f:
 check("框架配置-Schema 合法",
       isinstance(schema.get("whitelist_targets"), dict) and schema["whitelist_targets"].get("type") == "list"
       and schema["enable_scheduled_push"].get("type") == "bool")
+
+# ---------- 11. 白名单智能适配（纯群号自动补全前缀） ----------
+plugin7 = mod.DnaHelperPlugin(FakeContext())
+plugin7.config["whitelist_targets"] = ["QQ_BOT:GroupMessage:111", "222"]
+# 11.1 前缀缓存学习：收到一条消息后记录前缀
+asyncio.run(plugin7._learn_prefix(FakeEvent(unified_msg_origin="QQ_BOT:PrivateMessage:999")))
+check("智能适配-事件学习前缀", plugin7._last_prefix == "QQ_BOT")
+# 11.2 纯群号补全
+check("智能适配-纯群号补全", plugin7._resolve_target("222") == "QQ_BOT:GroupMessage:222")
+# 11.3 完整格式原样返回
+check("智能适配-完整格式原样", plugin7._resolve_target("QQ_BOT:GroupMessage:111") == "QQ_BOT:GroupMessage:111")
+# 11.4 无缓存时从白名单已有完整条目推断前缀
+plugin8 = mod.DnaHelperPlugin(FakeContext())
+plugin8.config["whitelist_targets"] = ["QQ_BOT:GroupMessage:111"]
+plugin8._last_prefix = None
+check("智能适配-从已有条目推断", plugin8._resolve_target("222") == "QQ_BOT:GroupMessage:222")
+# 11.5 完全无前缀信息：原样返回不崩溃
+plugin9 = mod.DnaHelperPlugin(FakeContext())
+plugin9.config["whitelist_targets"] = []
+check("智能适配-无前缀信息原样", plugin9._resolve_target("222") == "222")
+# 11.6 目标等价判断（完整 vs 群号）
+check("智能适配-等价判断", plugin7._targets_equal("QQ_BOT:GroupMessage:222", "222") is True
+      and plugin7._targets_equal("QQ_BOT:GroupMessage:222", "333") is False)
+# 11.7 移除指令：用群号移除完整格式条目
+plugin7.config["whitelist_targets"] = ["QQ_BOT:GroupMessage:111", "222"]
+async def remove_via_group_number():
+    gen = plugin7.remove_whitelist(FakeEvent("dna_移除白名单 111", "QQ_BOT:GroupMessage:111"))
+    async for r in gen:
+        pass
+asyncio.run(remove_via_group_number())
+check("智能适配-群号移除完整条目", plugin7.config["whitelist_targets"] == ["222"])
+# 11.8 显示指令：完整格式显示为群号
+async def show_via_group():
+    gen = plugin7.show_whitelist(FakeEvent("dna_查看推送群", "QQ_BOT:GroupMessage:111"))
+    out = []
+    async for r in gen:
+        out.append(r)
+    return out
+shown = asyncio.run(show_via_group())
+check("智能适配-显示为群号", "222" in shown[0] and "GroupMessage" not in shown[0])
 
 # ---------- 清理 ----------
 if os.path.exists(cfg_path):

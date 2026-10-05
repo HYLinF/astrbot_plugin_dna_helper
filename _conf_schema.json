@@ -5,10 +5,10 @@
     "default": true
   },
   "whitelist_targets": {
-    "description": "推送目标列表，格式：<平台前缀>:GroupMessage:<群号>",
+    "description": "推送目标列表（直接填群号即可，如 123456789；也支持完整格式）",
     "type": "list",
     "default": [],
-    "hint": "平台前缀随 AstrBot 机器人（消息源）名字自动变化，无需手填；推荐在群内发送 /dna_添加白名单 自动添加当前群。"
+    "hint": "直接填群号（如 123456789）即可，插件会自动补全当前机器人的前缀；也兼容完整格式 <平台前缀>:GroupMessage:<群号>。推荐在群内发送 /dna_添加白名单 自动添加当前群。"
   },
   "last_pushed_signature": {
     "description": "最近一次成功推送的内容指纹（插件自动维护，用于内容去重）",

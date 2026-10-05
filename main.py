@@ -33,7 +33,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.4.0"
+PLUGIN_VERSION = "2.4.1"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -173,6 +173,8 @@ class DnaHelperPlugin(Star):
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         # 防止定时任务与轮询任务同时推送，造成重复发送
         self._push_lock = asyncio.Lock()
+        # 最近一次收到的消息前缀（如 "QQ_BOT"），用于为纯群号白名单条目补全前缀
+        self._last_prefix: Optional[str] = None
 
     def _save_config(self) -> bool:
         """保存配置：优先写入框架可视化配置（AstrBotConfig.save_config），
@@ -265,6 +267,60 @@ class DnaHelperPlugin(Star):
             rows.append(row)
         return rows
 
+    # ================= 智能目标解析（纯群号白名单适配） =================
+    @staticmethod
+    def _extract_prefix(origin: str) -> Optional[str]:
+        """从 unified_msg_origin 提取平台前缀（冒号前一段）。"""
+        try:
+            prefix = (origin or "").split(":", 1)[0]
+            return prefix or None
+        except Exception:
+            return None
+
+    def _detect_prefix(self) -> Optional[str]:
+        """推断当前机器人的平台前缀：优先最近消息缓存，其次从白名单已有完整条目提取。"""
+        if self._last_prefix:
+            return self._last_prefix
+        for target in self.config.get("whitelist_targets") or []:
+            if ":GroupMessage:" in str(target):
+                prefix = self._extract_prefix(str(target))
+                if prefix:
+                    return prefix
+        return None
+
+    def _resolve_target(self, target: str) -> str:
+        """把白名单条目解析为可发送的完整消息源 ID。
+
+        - 含 ':' 视为完整格式，原样返回（兼容旧配置）；
+        - 纯群号（如 123456789）自动补全为 '<前缀>:GroupMessage:<群号>'；
+        - 无法推断前缀时原样返回并记录日志（不崩溃，避免漏推完整条目）。
+        """
+        target = str(target).strip()
+        if ":" in target or not target:
+            return target
+        prefix = self._detect_prefix()
+        if prefix:
+            return f"{prefix}:GroupMessage:{target}"
+        logger.warning(f"白名单条目 '{target}' 为纯群号且无法推断平台前缀，已原样发送")
+        return target
+
+    @staticmethod
+    def _targets_equal(a: str, b: str) -> bool:
+        """判断两条白名单条目是否指向同一目标（完整格式与纯群号互通）。"""
+        a, b = str(a).strip(), str(b).strip()
+        if a == b:
+            return True
+        a_group = a.rsplit("GroupMessage:", 1)[-1] if "GroupMessage:" in a else a
+        b_group = b.rsplit("GroupMessage:", 1)[-1] if "GroupMessage:" in b else b
+        return a_group == b_group
+
+    def _display_target(self, target: str) -> str:
+        """白名单条目的友好展示：完整格式只显示群号。"""
+        resolved = self._resolve_target(target)
+        if "GroupMessage:" in resolved:
+            return resolved.rsplit("GroupMessage:", 1)[-1]
+        return resolved
+
     # ================= 推送核心 =================
     async def _push_missions_to_whitelist(self) -> None:
         """定时任务主体（每小时 01:30）：拉取密函数据。
@@ -356,18 +412,24 @@ class DnaHelperPlugin(Star):
 
         success = 0
         for target in targets:
+            resolved = self._resolve_target(target)
+            if not resolved:
+                logger.warning(f"跳过无效推送目标: {target}")
+                continue
+            if resolved != target:
+                logger.info(f"白名单 '{target}' 已自动补全为 '{resolved}'")
             ok = False
             if png_bytes is not None:
-                ok = await self._send_image_message(target, png_bytes)
+                ok = await self._send_image_message(resolved, png_bytes)
                 if not ok:
-                    logger.warning(f"{target} 图片推送失败，回退为文本消息")
+                    logger.warning(f"{resolved} 图片推送失败，回退为文本消息")
                     message_text = self._format_missions_message(missions_data)
                     if message_text:
-                        ok = await self._send_message(target, message_text)
+                        ok = await self._send_message(resolved, message_text)
             else:
                 message_text = self._format_missions_message(missions_data)
                 if message_text:
-                    ok = await self._send_message(target, message_text)
+                    ok = await self._send_message(resolved, message_text)
             if ok:
                 success += 1
             await asyncio.sleep(PUSH_TARGET_INTERVAL_SECONDS)
@@ -671,6 +733,14 @@ class DnaHelperPlugin(Star):
             logger.error(f"推送失败 {unified_origin}: {e}")
             return False
 
+    # ================= 消息事件 =================
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def _learn_prefix(self, event: AstrMessageEvent):
+        """记录最近一条消息的平台前缀，供纯群号白名单条目补全使用。"""
+        prefix = self._extract_prefix(getattr(event, "unified_msg_origin", "") or "")
+        if prefix:
+            self._last_prefix = prefix
+
     # ================= 指令 =================
     @filter.command("dna_状态")
     async def status(self, event: AstrMessageEvent):
@@ -741,7 +811,7 @@ class DnaHelperPlugin(Star):
             return
         raw = parts[1].strip()
         current = self.config.get("whitelist_targets") or []
-        new_list = [t for t in current if t != raw]
+        new_list = [t for t in current if not self._targets_equal(t, raw)]
         if len(new_list) < len(current):
             self.config["whitelist_targets"] = new_list
             self._save_config()
@@ -751,12 +821,13 @@ class DnaHelperPlugin(Star):
 
     @filter.command("dna_查看推送群")
     async def show_whitelist(self, event: AstrMessageEvent):
-        """列出当前推送白名单。"""
+        """列出当前推送白名单（显示群号，兼容纯群号与完整格式）。"""
         targets = self.config.get("whitelist_targets") or []
         if not targets:
             yield event.plain_result("白名单为空")
         else:
-            yield event.plain_result("当前推送目标：\n" + "\n".join(targets))
+            lines = [f"{i + 1}. {self._display_target(t)}" for i, t in enumerate(targets)]
+            yield event.plain_result("当前推送目标：\n" + "\n".join(lines))
 
     @filter.command("dna_测试推送群")
     async def test_push_group(self, event: AstrMessageEvent):
@@ -767,8 +838,11 @@ class DnaHelperPlugin(Star):
             return
         success = 0
         for target in targets:
+            resolved = self._resolve_target(target)
+            if not resolved:
+                continue
             if await self._send_message(
-                target, "【二重螺旋助手】这是一条测试消息，您的群已成功接收。"
+                resolved, "【二重螺旋助手】这是一条测试消息，您的群已成功接收。"
             ):
                 success += 1
             await asyncio.sleep(TEST_TARGET_INTERVAL_SECONDS)
