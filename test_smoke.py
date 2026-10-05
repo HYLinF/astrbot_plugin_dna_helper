@@ -154,7 +154,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.3.16")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.0")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -281,7 +281,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.3.16" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.4.0" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))
@@ -392,6 +392,53 @@ asyncio.run(plugin3._poll_missions())
 check("轮询-发送失败不记指纹",
       plugin3.config["last_pushed_signature"] == "角色：A B\n武器：C\n魔之楔：D NEW")
 check("轮询-发送失败保持轮询", plugin3.scheduler.get_job(mod.POLL_JOB_ID) is not None)
+
+# ---------- 10. 官方可视化配置（_conf_schema 框架配置） ----------
+# 10.1 旧插件目录 config.json 有数据时，框架配置为空 → 自动迁移
+with open(cfg_path, "w", encoding="utf-8") as f:
+    json.dump({"enable_scheduled_push": True,
+               "whitelist_targets": ["legacy:GroupMessage:888"],
+               "last_pushed_signature": "旧指纹"}, f)
+
+class FakeFrameworkConfig(dict):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.saved = 0
+    def save_config(self):
+        self.saved += 1
+
+fw = FakeFrameworkConfig({"enable_scheduled_push": True, "whitelist_targets": [], "last_pushed_signature": ""})
+plugin4 = mod.DnaHelperPlugin(FakeContext(), fw)
+check("框架配置-迁移白名单", plugin4.config["whitelist_targets"] == ["legacy:GroupMessage:888"])
+check("框架配置-迁移指纹", plugin4.config["last_pushed_signature"] == "旧指纹")
+check("框架配置-迁移已保存", fw.saved == 1 and fw["whitelist_targets"] == ["legacy:GroupMessage:888"])
+check("框架配置-迁移后旧文件重置",
+      mod.load_config()["whitelist_targets"] == [] and mod.load_config()["last_pushed_signature"] == "")
+
+# 10.2 修改配置后 _save_config 写回框架配置
+plugin4.config["whitelist_targets"] = ["a", "b"]
+plugin4._save_config()
+check("框架配置-保存写回", fw["whitelist_targets"] == ["a", "b"] and fw.saved == 2)
+
+# 10.3 框架配置已有数据时不覆盖迁移
+fw2 = FakeFrameworkConfig({"enable_scheduled_push": False, "whitelist_targets": ["keep"], "last_pushed_signature": ""})
+plugin5 = mod.DnaHelperPlugin(FakeContext(), fw2)
+check("框架配置-已有数据不迁移", plugin5.config["whitelist_targets"] == ["keep"] and fw2.saved == 0)
+
+# 10.4 无框架配置（旧环境/本地）回退插件目录 config.json
+with open(cfg_path, "w", encoding="utf-8") as f:
+    json.dump({"enable_scheduled_push": True,
+               "whitelist_targets": ["legacy:GroupMessage:888"],
+               "last_pushed_signature": ""}, f)
+plugin6 = mod.DnaHelperPlugin(FakeContext())
+check("框架配置-无框架回退本地", plugin6.config.get("whitelist_targets") == ["legacy:GroupMessage:888"])
+
+# 10.5 _conf_schema.json 文件内容合法（官方 Schema 可被 json 解析且含必需字段）
+with open(os.path.join(WORK_DIR, "_conf_schema.json"), encoding="utf-8") as f:
+    schema = json.load(f)
+check("框架配置-Schema 合法",
+      isinstance(schema.get("whitelist_targets"), dict) and schema["whitelist_targets"].get("type") == "list"
+      and schema["enable_scheduled_push"].get("type") == "bool")
 
 # ---------- 清理 ----------
 if os.path.exists(cfg_path):

@@ -33,7 +33,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.3.16"
+PLUGIN_VERSION = "2.4.0"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -144,12 +144,49 @@ def save_config(config: dict[str, Any]) -> bool:
 class DnaHelperPlugin(Star):
     """二重螺旋密函委托定时推送插件。"""
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config=None):
         super().__init__(context)
-        self.config = load_config()
+        # config: AstrBot 官方可视化配置（插件目录 _conf_schema.json → data/config/<插件名>_config.json）。
+        # 传 None 时（本地测试/旧环境）回退到插件目录 config.json，保证不丢失功能。
+        self._framework_config = config
+        if config is not None:
+            merged = _normalize_config(dict(config))
+            # 一次性迁移：把插件目录 config.json 中的历史数据搬进框架配置；
+            # 迁移成功后重置旧配置文件，避免旧数据在重启后反复回灌框架配置。
+            legacy = load_config()
+            migrated = False
+            if not merged.get("whitelist_targets") and legacy.get("whitelist_targets"):
+                merged["whitelist_targets"] = legacy["whitelist_targets"]
+                migrated = True
+            if not merged.get("last_pushed_signature") and legacy.get("last_pushed_signature"):
+                merged["last_pushed_signature"] = legacy["last_pushed_signature"]
+                migrated = True
+            self.config = merged
+            if migrated:
+                self._save_config()  # 迁移结果立即写回框架配置文件
+                try:
+                    save_config(dict(DEFAULT_CONFIG))
+                except Exception as e:
+                    logger.warning(f"重置旧配置文件失败（不影响运行）: {e}")
+        else:
+            self.config = load_config()
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         # 防止定时任务与轮询任务同时推送，造成重复发送
         self._push_lock = asyncio.Lock()
+
+    def _save_config(self) -> bool:
+        """保存配置：优先写入框架可视化配置（AstrBotConfig.save_config），
+        无框架配置时回退到插件目录 config.json（原子写）。"""
+        if self._framework_config is not None:
+            try:
+                self._framework_config.clear()
+                self._framework_config.update(self.config)
+                self._framework_config.save_config()
+                return True
+            except Exception as e:
+                logger.error(f"保存框架配置失败，已回退本地文件: {e}")
+                return save_config(self.config)
+        return save_config(self.config)
 
     # ================= 生命周期 =================
     async def initialize(self) -> None:
@@ -266,7 +303,7 @@ class DnaHelperPlugin(Star):
             if success > 0:
                 # 只有确实推送成功才记录指纹，避免发送失败后永远不再重试
                 self.config["last_pushed_signature"] = signature
-                save_config(self.config)
+                self._save_config()
                 await self._stop_polling()
             logger.info(f"定时推送完成：成功 {success}/{len(targets)}")
 
@@ -300,7 +337,7 @@ class DnaHelperPlugin(Star):
             success = await self._send_to_targets(missions)
             if success > 0:
                 self.config["last_pushed_signature"] = signature
-                save_config(self.config)
+                self._save_config()
                 await self._stop_polling()
                 logger.info("轮询发现新内容并推送成功，恢复正常每小时 01:30 推送")
             else:
@@ -662,7 +699,7 @@ class DnaHelperPlugin(Star):
     async def enable_push(self, event: AstrMessageEvent):
         """启用定时推送（立即生效）。"""
         self.config["enable_scheduled_push"] = True
-        saved = save_config(self.config)
+        saved = self._save_config()
         started = await self._start_scheduler()
         if saved and started:
             yield event.plain_result("✅ 已启用定时推送。")
@@ -675,7 +712,7 @@ class DnaHelperPlugin(Star):
     async def disable_push(self, event: AstrMessageEvent):
         """禁用定时推送（立即停止定时任务）。"""
         self.config["enable_scheduled_push"] = False
-        saved = save_config(self.config)
+        saved = self._save_config()
         await self._stop_scheduler()
         if saved:
             yield event.plain_result("❌ 已禁用定时推送。")
@@ -690,7 +727,7 @@ class DnaHelperPlugin(Star):
         current = self.config.setdefault("whitelist_targets", [])
         if target not in current:
             current.append(target)
-            save_config(self.config)
+            self._save_config()
             yield event.plain_result(f"✅ 已添加: {target}")
         else:
             yield event.plain_result("已在白名单中")
@@ -707,7 +744,7 @@ class DnaHelperPlugin(Star):
         new_list = [t for t in current if t != raw]
         if len(new_list) < len(current):
             self.config["whitelist_targets"] = new_list
-            save_config(self.config)
+            self._save_config()
             yield event.plain_result(f"✅ 已移除: {raw}")
         else:
             yield event.plain_result(f"❌ 未找到: {raw}")
