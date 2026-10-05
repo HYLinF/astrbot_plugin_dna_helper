@@ -37,7 +37,7 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 ```json
 {
   "enable_scheduled_push": true,
-  "whitelist_targets": ["QQ_BOT:GroupMessage:123456789"],
+  "whitelist_targets": ["<平台前缀>:GroupMessage:123456789"],
   "last_pushed_signature": ""
 }
 ```
@@ -45,7 +45,7 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 | 字段 | 说明 |
 | --- | --- |
 | `enable_scheduled_push` | 定时推送总开关（true 启用 / false 禁用） |
-| `whitelist_targets` | 推送目标列表，`QQ_BOT:GroupMessage:<群号>` 格式 |
+| `whitelist_targets` | 推送目标列表，格式 `<平台前缀>:GroupMessage:<群号>`。平台前缀随 AstrBot 机器人（消息源）名字自动变化，不是固定值；**推荐直接用 `/dna_添加白名单` 指令添加**，插件会自动带上当前机器人的前缀，无需手填 |
 | `last_pushed_signature` | 最近一次成功推送的内容指纹（插件自动维护，用于去重，勿手改） |
 
 配置读写为原子操作（临时文件 + 替换），损坏时自动回退默认配置。
