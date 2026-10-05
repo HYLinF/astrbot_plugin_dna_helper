@@ -158,7 +158,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.3")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.4")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -285,7 +285,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.4.3" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.4.4" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))
@@ -524,6 +524,18 @@ with open(cfg_path, "w", encoding="utf-8") as f:
     json.dump({"enable_image_push": "yes", "t2i_api_url": 123}, f)
 cfg12 = mod.load_config()
 check("图片配置-归一化", cfg12["enable_image_push"] is True and cfg12["t2i_api_url"] == "")
+
+# ---------- 12.6 测试信息指令遵循图片开关：关闭时不出图 ----------
+plugin11 = mod.DnaHelperPlugin(FakeContext())
+plugin11.config["enable_image_push"] = False
+plugin11.config["last_pushed_signature"] = "old-sig"
+plugin11._fetch_missions_from_api = fake_fetch_for_test
+render_called["n"] = 0
+plugin11._render_missions_image = spy_render
+ev11 = FakeEvent(message_str="/dna_测试信息")
+res11 = asyncio.run(collect(plugin11.test_fetch_info(ev11)))
+check("测试信息-图片开关关闭不出图", render_called["n"] == 0
+      and len(res11) == 1 and "角色" in res11[0] and "与上次推送不同" in res11[0])
 
 # ---------- 清理 ----------
 if os.path.exists(cfg_path):

@@ -33,7 +33,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.4.3"
+PLUGIN_VERSION = "2.4.4"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -885,7 +885,10 @@ class DnaHelperPlugin(Star):
         else:
             note = "（暂无上次推送记录）"
 
-        png_bytes = await self._render_missions_image(missions)
+        # 测试信息同样遵循「图片推送开关」：关闭时直接返回纯文字
+        png_bytes = None
+        if self.config.get("enable_image_push", True):
+            png_bytes = await self._render_missions_image(missions)
         if png_bytes is not None:
             try:
                 b64 = base64.b64encode(png_bytes).decode("ascii")
