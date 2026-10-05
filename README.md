@@ -48,7 +48,7 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 | --- | --- |
 | `enable_scheduled_push` | 定时推送总开关（true 启用 / false 禁用） |
 | `enable_image_push` | 图片推送开关（true 推游戏风格图片 / false 推纯文字；开启但渲染失败也会自动回退纯文字） |
-| `t2i_api_url` | 文字生图 API 地址。留空使用 AstrBot 官方 astrbot-t2i-service 默认地址；自建兼容服务可填自己的地址 |
+| `t2i_api_url` | 文字生图 API 地址。留空使用 **AstrBot 官方远程服务**（`https://t2i.soulter.top/text2img/generate`）；自建/自部署兼容服务（如官方 astrbot-t2i-service 容器）可填自己的地址 |
 | `whitelist_targets` | 推送目标列表。**直接填群号即可**（如 `123456789`），插件会自动补全当前机器人的平台前缀；也兼容完整格式 `<平台前缀>:GroupMessage:<群号>`。平台前缀随 AstrBot 机器人（消息源）名字自动变化；**也可在群内发送 `/dna_添加白名单` 指令添加**，插件会自动带上当前机器人的前缀 |
 | `last_pushed_signature` | 最近一次成功推送的内容指纹（插件自动维护，用于去重，勿手改） |
 
@@ -70,7 +70,7 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 | --- | --- |
 | `enable_scheduled_push` | 定时推送总开关（true 启用 / false 禁用） |
 | `enable_image_push` | 图片推送开关（true 推游戏风格图片 / false 推纯文字；开启但渲染失败也会自动回退纯文字） |
-| `t2i_api_url` | 文字生图 API 地址。留空使用 AstrBot 官方 astrbot-t2i-service 默认地址；自建兼容服务可填自己的地址 |
+| `t2i_api_url` | 文字生图 API 地址。留空使用 **AstrBot 官方远程服务**（`https://t2i.soulter.top/text2img/generate`）；自建/自部署兼容服务（如官方 astrbot-t2i-service 容器）可填自己的地址 |
 | `whitelist_targets` | 推送目标列表。**直接填群号即可**（如 `123456789`），插件会自动补全当前机器人的平台前缀；也兼容完整格式 `<平台前缀>:GroupMessage:<群号>`。平台前缀随 AstrBot 机器人（消息源）名字自动变化；**也可在群内发送 `/dna_添加白名单` 指令添加**，插件会自动带上当前机器人的前缀 |
 | `last_pushed_signature` | 最近一次成功推送的内容指纹（插件自动维护，用于去重，勿手改） |
 
@@ -81,8 +81,10 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 ## 依赖与运行环境
 
 - AstrBot 4.x（生命周期钩子 `initialize` / `terminate`）
-- 可选：`astrbot-t2i-service` 容器（端口 8999，用于图片渲染，自带中文字体）；
-  不可用时自动降级为文本推送，不影响功能
+- 图片推送默认使用 **AstrBot 官方远程文字生图服务**（无需额外部署，开箱即用）；
+  可选：自部署 `astrbot-t2i-service` 容器（`docker run -itd -p 8999:8999 soulter/astrbot-t2i-service:latest`），
+  然后在配置页 `t2i_api_url` 填入自己的地址（如 `http://127.0.0.1:8999/text2img/generate`）以获得更快的本地渲染；
+  图片服务不可用时自动降级为文本推送，不影响功能
 - 密函数据源：`https://api.dna-builder.cn/graphql`（`missionsIngame(server: "cn")`）
 
 ## 安装方法
@@ -97,7 +99,8 @@ AstrBot 插件：定时向白名单 QQ 群推送《二重螺旋》（DNA）游�
 
 ## 版本历史
 
-- **v2.4.2** 新增可视化配置项：文字生图 API 地址（`t2i_api_url`，留空用官方默认、可自填）与图片推送开关（`enable_image_push`，关闭或渲染失败自动回退纯文字）
+- **v2.4.3** 文字生图默认端点改为 AstrBot 官方远程服务（`t2i.soulter.top/text2img/generate`，实测可用）；`t2i_api_url` 留空即用官方，自部署服务可填自己的地址覆盖
+- **v2.4.2** 新增可视化配置项：文字生图 API 地址（`t2i_api_url`）与图片推送开关（`enable_image_push`，关闭或渲染失败自动回退纯文字）
 - **v2.4.1** 白名单智能适配：配置页/指令可直接填纯群号（如 123456789），插件自动补全当前机器人前缀；移除与展示支持群号/完整格式互通
 - **v2.4.0** 接入 AstrBot 官方可视化配置：新增 `_conf_schema.json`，管理面板「扩展 → 齿轮」可直接设置开关与推送群号；配置迁移至框架级 `data/config/`，旧 config.json 数据自动迁移
 - **v2.3.16** 背景渐变加 no-repeat：消除渐变在画布上平铺导致底部二次变亮的问题

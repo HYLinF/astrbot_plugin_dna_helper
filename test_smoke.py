@@ -158,7 +158,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.2")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.3")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -285,7 +285,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.4.2" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.4.3" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))

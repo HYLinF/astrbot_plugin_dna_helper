@@ -33,7 +33,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.4.2"
+PLUGIN_VERSION = "2.4.3"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -68,9 +68,10 @@ STATUS_LABEL = "当前开放"
 BLOCK_SEPARATOR = "━" * 30
 
 # ------------------------- T2I 图片渲染服务 -------------------------
-# AstrBot 官方 astrbot-t2i-service 容器，将 HTML 模板渲染为图片。
-# 插件容器经 Docker bridge 网关（172.17.0.1）访问宿主机映射的 8999 端口。
-T2I_URL = "http://172.17.0.1:8999/text2img/generate"
+# AstrBot 官方文字生图服务（默认远程端点，实测有效路径为 /text2img/generate）：
+# https://t2i.soulter.top/text2img/generate
+# 用户可在配置页 t2i_api_url 填自己的服务（如自部署 astrbot-t2i-service 容器）覆盖。
+T2I_URL = "https://t2i.soulter.top/text2img/generate"
 T2I_TIMEOUT = 30  # 秒
 # T2I 服务固定视口 1280x720（Playwright 默认），viewport_width 参数被忽略；
 # clip 只截中间内容区域（body 宽 430 居中），左右各留 30px 背景余量，
