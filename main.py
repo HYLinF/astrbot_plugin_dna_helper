@@ -19,6 +19,7 @@ import base64
 import html
 import json
 import os
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -33,7 +34,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.4.4"
+PLUGIN_VERSION = "2.5.0"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
@@ -48,6 +49,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enable_image_push": True,
     # 文字生图 API 地址：留空使用 AstrBot 官方 astrbot-t2i-service 默认地址
     "t2i_api_url": "",
+    # 图片重点标注开关（两个独立开关，可在 AstrBot 插件配置页分别控制）：
+    # 开启后，「探险/无尽」用红色手绘圈、「调停」用蓝色手绘圈在图片中标注重点
+    "enable_highlight_explore": True,
+    "enable_highlight_mediation": True,
     "whitelist_targets": [],
     # 最近一次成功推送的密函内容指纹，用于内容去重（由插件自动维护）
     "last_pushed_signature": "",
@@ -66,6 +71,43 @@ REQUIRED_MISSION_ROWS = 3
 # 展示样式常量（模仿游戏「委托密圈」界面；等级不随内容变化，故不展示）
 STATUS_LABEL = "当前开放"
 BLOCK_SEPARATOR = "━" * 30
+
+# ------------------------- 图片重点标注（手绘圈） -------------------------
+# 名称匹配使用密函 API 返回的真实字符串（用户常写作"探索/无尽"，API 实为"探险/无尽"）。
+HL_EXPLORE_NAMES = ("探险/无尽",)  # 红色手绘圈
+HL_MEDIATION_NAMES = ("调停",)     # 蓝色手绘圈
+HL_COLORS = {"explore": "#d63a2c", "mediation": "#3f6fb5"}
+
+# 三种手绘圈样式（每次渲染随机取一种；viewBox 100x100，完整包住整行文字）
+SCRIBBLE_STYLES: dict[str, dict[str, Any]] = {
+    # A 左上开口单圈：连贯平滑，左上留口、末端微甩
+    "A": {
+        "rotate": -1.2,
+        "paths": [
+            "M 16 26 C 26 8, 62 6, 84 14 C 95 21, 94 52, 83 62 "
+            "C 73 90, 38 93, 25 86 C 13 79, 9 62, 14 50 C 16 41, 21 33, 29 27"
+        ],
+    },
+    # B 右上开口·粗细笔压：左半圈粗、右半圈细（收笔尖细）
+    "B": {
+        "rotate": -1.4,
+        "paths": [
+            "M 66 12 C 40 4, 22 14, 14 30 C 6 46, 10 66, 24 78",
+            "M 24 78 C 38 88, 62 86, 78 74 C 88 64, 88 44, 80 30 "
+            "C 76 22, 71 17, 69 15",
+        ],
+        "widths": [3.4, 1.6],
+    },
+    # C 单圈带勾：平滑近圆，左侧收笔弯一个小钩
+    "C": {
+        "rotate": -0.8,
+        "paths": [
+            "M 24 18 C 10 30, 8 58, 22 74 C 36 88, 64 86, 80 70 "
+            "C 92 54, 90 30, 74 18 C 60 8, 34 8, 27 16 C 23 20, 20 26, 23 32"
+        ],
+    },
+}
+SCRIBBLE_DEFAULT_WIDTH = 2.4
 
 # ------------------------- T2I 图片渲染服务 -------------------------
 # AstrBot 官方文字生图服务（默认远程端点，实测有效路径为 /text2img/generate）：
@@ -106,6 +148,12 @@ def _normalize_config(raw: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(config["enable_image_push"], bool):
         config["enable_image_push"] = DEFAULT_CONFIG["enable_image_push"]
+
+    if not isinstance(config.get("enable_highlight_explore"), bool):
+        config["enable_highlight_explore"] = DEFAULT_CONFIG["enable_highlight_explore"]
+
+    if not isinstance(config.get("enable_highlight_mediation"), bool):
+        config["enable_highlight_mediation"] = DEFAULT_CONFIG["enable_highlight_mediation"]
 
     if not isinstance(config.get("t2i_api_url"), str):
         config["t2i_api_url"] = ""
@@ -566,7 +614,14 @@ class DnaHelperPlugin(Star):
         return "\n".join(lines)
 
     @classmethod
-    def _build_missions_html(cls, missions_data: list, beijing_time: str) -> Optional[str]:
+    def _build_missions_html(
+        cls,
+        missions_data: list,
+        beijing_time: str,
+        hl_explore: bool = True,
+        hl_mediation: bool = True,
+        scribble_style: str = "A",
+    ) -> Optional[str]:
         """构造「密函委托书」风格 HTML 模板（供 T2I 服务渲染为图片）。
 
         视觉方向：做旧羊皮纸委托书质感——深色桌面背景上浮起一张米白信纸
@@ -574,6 +629,9 @@ class DnaHelperPlugin(Star):
         魔之楔）：墨色分类名 + 玩法清单（朱红圆点 + 玩法名 + 序号），
         底部落款更新时间。副标题与「当前开放」徽标按用户反馈精简，等级与
         持有数不随接口数据变化，故不展示。
+
+        重点标注：开启对应开关时，「探险/无尽」加红色手绘圈、「调停」加
+        蓝色手绘圈；圈样式为手绘椭圆（三种随机，由调用方传入 scribble_style）。
         """
         rows = cls._category_rows(missions_data)
         if rows is None:
@@ -582,16 +640,48 @@ class DnaHelperPlugin(Star):
         def _escape(text: Any) -> str:
             return html.escape(str(text), quote=True)
 
+        def _scribble_svg(color: str, style_key: str) -> str:
+            style = SCRIBBLE_STYLES.get(style_key) or SCRIBBLE_STYLES["A"]
+            widths = style.get("widths") or [
+                SCRIBBLE_DEFAULT_WIDTH
+            ] * len(style["paths"])
+            paths = "".join(
+                f'<path d="{d}" stroke-width="{w}"/>'
+                for d, w in zip(style["paths"], widths)
+            )
+            rot = style["rotate"]
+            return (
+                '<svg class="scribble" width="100%" height="100%" '
+                'viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">'
+                f'<g fill="none" stroke="{color}" stroke-linecap="round" '
+                f'stroke-linejoin="round" opacity="0.95" '
+                f'vector-effect="non-scaling-stroke" transform="rotate({rot} 50 50)">'
+                f"{paths}</g></svg>"
+            )
+
         cols = []
         for idx, category in enumerate(MISSION_CATEGORIES):
-            modes_html = "".join(
-                f'<div class="mode">'
-                f'<span class="dot"></span>'
-                f'<span class="mtext">{_escape(v)}</span>'
-                f'<span class="midx">{num:02d}</span>'
-                f"</div>"
-                for num, v in enumerate(rows[idx], start=1)
-            )
+            modes_html = ""
+            for num, v in enumerate(rows[idx], start=1):
+                text = str(v)
+                hl = None
+                if hl_explore and text in HL_EXPLORE_NAMES:
+                    hl = "explore"
+                elif hl_mediation and text in HL_MEDIATION_NAMES:
+                    hl = "mediation"
+                svg = ""
+                if hl is not None:
+                    modes_html += f'<div class="mode hl-scribble">'
+                    svg = _scribble_svg(HL_COLORS[hl], scribble_style)
+                else:
+                    modes_html += '<div class="mode">'
+                modes_html += (
+                    f"{svg}"
+                    f'<span class="dot"></span>'
+                    f'<span class="mtext">{_escape(text)}</span>'
+                    f'<span class="midx">{num:02d}</span>'
+                    f"</div>"
+                )
             cols.append(
                 '<div class="col">'
                 f'<div class="col-head"><span class="cat">{_escape(category)}</span></div>'
@@ -638,8 +728,11 @@ class DnaHelperPlugin(Star):
             "background:linear-gradient(90deg,#a33b22 0%,rgba(80,50,20,.30) 72%,transparent)}"
             ".modes{width:100%}"
             ".mode{display:flex;align-items:center;justify-content:center;gap:10px;font-size:15.5px;"
-            "color:#4a3a22;padding:6px 2px;border-bottom:1px dotted rgba(80,50,20,.24)}"
+            "color:#4a3a22;padding:6px 2px;border-bottom:1px dotted rgba(80,50,20,.24);position:relative}"
             ".mode:last-child{border-bottom:none}"
+            ".mode.hl-scribble{border-bottom-color:transparent;background:none}"
+            ".scribble{position:absolute;left:0;top:0;width:100%;height:100%;"
+            "pointer-events:none;overflow:visible}"
             ".dot{width:5px;height:5px;border-radius:50%;background:#a33b22;flex:0 0 auto;opacity:.85}"
             ".mtext{text-align:left}"
             ".midx{font-size:10px;color:#a33b22;letter-spacing:1px;opacity:.75;"
@@ -669,7 +762,17 @@ class DnaHelperPlugin(Star):
         beijing_time = datetime.now(timezone(timedelta(hours=8))).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        page_html = self._build_missions_html(missions_data, beijing_time)
+        # 重点标注开关：从配置读取（WebUI 可分别控制）；三种手绘圈样式随机取一种
+        hl_explore = bool(self.config.get("enable_highlight_explore", True))
+        hl_mediation = bool(self.config.get("enable_highlight_mediation", True))
+        scribble_style = random.choice(tuple(SCRIBBLE_STYLES.keys()))
+        page_html = self._build_missions_html(
+            missions_data,
+            beijing_time,
+            hl_explore=hl_explore,
+            hl_mediation=hl_mediation,
+            scribble_style=scribble_style,
+        )
         if not page_html:
             return None
         payload = {

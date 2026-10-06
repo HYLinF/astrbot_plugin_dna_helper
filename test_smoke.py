@@ -158,7 +158,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.4.4")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.5.0")
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -195,6 +195,32 @@ check("HTML-三列横排", 'class="board"' in h and h.count('class="col"') == 3)
 check("HTML-时间戳", "2026-01-01 12:00:00" in h)
 check("HTML-行数不足None", mod.DnaHelperPlugin._build_missions_html([["a"]], "t") is None)
 check("HTML-行格式异常None", mod.DnaHelperPlugin._build_missions_html(["abc", "def", "ghi"], "t") is None)
+
+# ---------- 4.7 重点标注（手绘圈） ----------
+_hl_rows = [["探险/无尽", "调停", "追缉"], ["拆解"], ["避险"]]
+_h_on = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=True, hl_mediation=True, scribble_style="A"
+)
+check("标注-红圈探险/无尽", 'class="mode hl-scribble"' in _h_on and 'stroke="#d63a2c"' in _h_on)
+check("标注-蓝圈调停", 'stroke="#3f6fb5"' in _h_on)
+check("标注-未命中不圈", _h_on.count('class="mode hl-scribble"') == 2)
+_h_off = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=False, hl_mediation=False, scribble_style="A"
+)
+check("标注-双关全关无圈", '<div class="mode hl-scribble">' not in _h_off)
+_h_part = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=True, hl_mediation=False, scribble_style="A"
+)
+check("标注-红开蓝关只有红圈", 'stroke="#d63a2c"' in _h_part and 'stroke="#3f6fb5"' not in _h_part)
+_h_b = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=True, hl_mediation=True, scribble_style="B"
+)
+check("标注-B样式双段路径", _h_b.count("<path") == 4)  # 两个圈各含 2 段 path
+_h_c = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=True, hl_mediation=True, scribble_style="C"
+)
+check("标注-C样式单段路径", _h_c.count("<path") == 2)
+check("标注-默认配置开关为真", mod.DEFAULT_CONFIG["enable_highlight_explore"] is True and mod.DEFAULT_CONFIG["enable_highlight_mediation"] is True)
 
 # ---------- 4.6 底部空白裁剪 ----------
 from PIL import Image, ImageDraw
@@ -285,7 +311,7 @@ check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
 res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.4.4" in res[0] and "1 个" in res[0])
+check("状态-包含版本", "2.5.0" in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
 res = asyncio.run(collect(plugin2.help_cmd(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))

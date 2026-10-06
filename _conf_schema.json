@@ -9,6 +9,18 @@
     "type": "bool",
     "default": true
   },
+  "enable_highlight_explore": {
+    "description": "「探险/无尽」红色手绘圈重点标注开关",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，图片推送中出现的「探险/无尽」条目会用红色手绘圈圈出重点；关闭则不做任何标注。"
+  },
+  "enable_highlight_mediation": {
+    "description": "「调停」蓝色手绘圈重点标注开关",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，图片推送中出现的「调停」条目会用蓝色手绘圈圈出，与「探险/无尽」的红色标注区分；关闭则不做任何标注。"
+  },
   "t2i_api_url": {
     "description": "文字生图 API 地址（留空使用 AstrBot 官方远程服务）",
     "type": "string",
