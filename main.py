@@ -672,7 +672,13 @@ class DnaHelperPlugin(Star):
                 svg = ""
                 if hl is not None:
                     modes_html += f'<div class="mode hl-scribble">'
-                    svg = _scribble_svg(HL_COLORS[hl], scribble_style)
+                    # 每个被标注条目独立随机一种手绘圈样式（传固定样式名则整图统一，便于测试）
+                    style_key = (
+                        scribble_style
+                        if scribble_style
+                        else random.choice(tuple(SCRIBBLE_STYLES.keys()))
+                    )
+                    svg = _scribble_svg(HL_COLORS[hl], style_key)
                 else:
                     modes_html += '<div class="mode">'
                 modes_html += (
@@ -762,16 +768,16 @@ class DnaHelperPlugin(Star):
         beijing_time = datetime.now(timezone(timedelta(hours=8))).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        # 重点标注开关：从配置读取（WebUI 可分别控制）；三种手绘圈样式随机取一种
+        # 重点标注开关：从配置读取（WebUI 可分别控制）；
+        # 圈样式不固定（None）：每个被标注条目独立随机三种手绘圈样式之一
         hl_explore = bool(self.config.get("enable_highlight_explore", True))
         hl_mediation = bool(self.config.get("enable_highlight_mediation", True))
-        scribble_style = random.choice(tuple(SCRIBBLE_STYLES.keys()))
         page_html = self._build_missions_html(
             missions_data,
             beijing_time,
             hl_explore=hl_explore,
             hl_mediation=hl_mediation,
-            scribble_style=scribble_style,
+            scribble_style=None,
         )
         if not page_html:
             return None

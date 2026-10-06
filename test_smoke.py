@@ -220,6 +220,10 @@ _h_c = mod.DnaHelperPlugin._build_missions_html(
     _hl_rows, "t", hl_explore=True, hl_mediation=True, scribble_style="C"
 )
 check("标注-C样式单段路径", _h_c.count("<path") == 2)
+_h_rand = mod.DnaHelperPlugin._build_missions_html(
+    _hl_rows, "t", hl_explore=True, hl_mediation=True, scribble_style=None
+)
+check("标注-条目独立随机样式可渲染", '<div class="mode hl-scribble">' in _h_rand and "<path" in _h_rand)
 check("标注-默认配置开关为真", mod.DEFAULT_CONFIG["enable_highlight_explore"] is True and mod.DEFAULT_CONFIG["enable_highlight_mediation"] is True)
 
 # ---------- 4.6 底部空白裁剪 ----------
