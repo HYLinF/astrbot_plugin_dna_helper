@@ -34,7 +34,7 @@ from astrbot.api.star import Context, Star, register
 
 # ------------------------- 插件元信息 -------------------------
 PLUGIN_NAME = "astrbot_plugin_dna_helper"
-PLUGIN_VERSION = "2.5.0"
+PLUGIN_VERSION = "2.5.1"
 PLUGIN_REPO = "https://github.com/HYLinF/astrbot_plugin_dna_helper"
 PLUGIN_DESCRIPTION = "二重螺旋（DNA）密函委托定时推送插件"
 
