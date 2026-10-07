@@ -29,9 +29,12 @@ class FakeMessageChain:
         return self
 
 class FakeEvent:
-    def __init__(self, message_str="", unified_msg_origin="QQ_BOT:GroupMessage:1"):
+    def __init__(self, message_str="", unified_msg_origin="QQ_BOT:GroupMessage:1", sender_id=None):
         self.message_str = message_str
         self.unified_msg_origin = unified_msg_origin
+        self.message = types.SimpleNamespace(
+            sender=types.SimpleNamespace(user_id=sender_id)
+        )
         self.results = []
     def plain_result(self, text):
         self.results.append(text)
@@ -70,9 +73,10 @@ def fake_register(name, author, desc, version, repo):
         return cls
     return deco
 
-def fake_command(name, **kw):
+def fake_command(*names, **kw):
     def deco(fn):
-        fn._cmd = name
+        fn._cmd = names[0]
+        fn._cmd_aliases = names
         return fn
     return deco
 
@@ -115,6 +119,30 @@ class FakeClientError(Exception):
 aiohttp_mod = types.ModuleType("aiohttp")
 aiohttp_mod.ClientError = FakeClientError
 aiohttp_mod.ClientSession = object
+aiohttp_mod.ClientTimeout = lambda **kw: ("timeout", kw)
+try:
+    import aiohttp.web as _real_web  # 本地装了 aiohttp 时直接用真实 web 桩
+    aiohttp_mod.web = _real_web
+except ImportError:
+    class _FakeJsonResponse:
+        def __init__(self, *a, **k):
+            self.status = 200
+            self._payload = k.get("data", a[0] if a else None)
+    class _FakeResponse:
+        def __init__(self, *a, **k):
+            self.status = 200
+            self.text = k.get("text", "")
+            self.content_type = k.get("content_type", "")
+    _fake_web = types.ModuleType("aiohttp.web")
+    _fake_web.Application = lambda *a, **k: types.SimpleNamespace(router=types.SimpleNamespace(add_get=lambda *x: None, add_post=lambda *x: None))
+    _fake_web.AppRunner = lambda app: types.SimpleNamespace(setup=lambda: _noop())
+    _fake_web.TCPSite = lambda *a, **k: types.SimpleNamespace(start=lambda: _noop())
+    _fake_web.json_response = lambda data, **k: _FakeJsonResponse(data=data, **k)
+    _fake_web.Response = lambda **k: _FakeResponse(**k)
+    aiohttp_mod.web = _fake_web
+
+def _noop():
+    return None
 
 sys.modules.update({
     "aiohttp": aiohttp_mod,
@@ -158,7 +186,7 @@ async def _mock_render_none(missions):
     return None
 
 # ---------- 1. 注册元信息 ----------
-check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == "2.5.1")
+check("register 元信息完整", mod.DnaHelperPlugin._meta[0] == "astrbot_plugin_dna_helper" and mod.DnaHelperPlugin._meta[3] == mod.PLUGIN_VERSION)
 
 # ---------- 2. 默认配置 ----------
 cfg_path = mod.CONFIG_FILE
@@ -257,7 +285,7 @@ plugin2 = mod.DnaHelperPlugin(ctx)
 plugin2.config["whitelist_targets"] = ["g1", "g2"]
 async def fake_fetch():
     return [["A", "B"], ["C"], ["D", "E"]]
-plugin2._fetch_missions_from_api = fake_fetch
+plugin2._fetch_missions = fake_fetch
 # T2I 不可用 → 回退文本推送
 plugin2._render_missions_image = _mock_render_none
 asyncio.run(plugin2._push_missions_to_whitelist())
@@ -286,38 +314,38 @@ check("推送-空白名单跳过", len(ctx.sent) == 0)
 plugin2.config["whitelist_targets"] = ["g1"]
 async def fake_fetch_none():
     return None
-plugin2._fetch_missions_from_api = fake_fetch_none
+plugin2._fetch_missions = fake_fetch_none
 asyncio.run(plugin2._push_missions_to_whitelist())
 check("推送-拉取失败跳过", len(ctx.sent) == 0)
 
 # ---------- 7. 指令：添加/移除/启用/禁用 ----------
 plugin2.config["whitelist_targets"] = []
 ev = FakeEvent(message_str="/dna_添加白名单", unified_msg_origin="QQ_BOT:GroupMessage:99")
-res = asyncio.run(collect(plugin2.add_whitelist(ev)))
+res = asyncio.run(collect(plugin2.cmd_add_whitelist(ev)))
 check("添加-默认当前群", "QQ_BOT:GroupMessage:99" in res[0] and any("99" in t for t in plugin2.config["whitelist_targets"]))
 
 ev2 = FakeEvent(message_str="/dna_添加白名单 abc")
-res = asyncio.run(collect(plugin2.add_whitelist(ev2)))
+res = asyncio.run(collect(plugin2.cmd_add_whitelist(ev2)))
 check("添加-指定目标", "abc" in plugin2.config["whitelist_targets"])
 
 ev3 = FakeEvent(message_str="/dna_移除白名单 abc")
-res = asyncio.run(collect(plugin2.remove_whitelist(ev3)))
+res = asyncio.run(collect(plugin2.cmd_remove_whitelist(ev3)))
 check("移除-成功", "abc" not in plugin2.config["whitelist_targets"] and "已移除" in res[0])
 
 ev4 = FakeEvent(message_str="/dna_禁用推送")
-res = asyncio.run(collect(plugin2.disable_push(ev4)))
+res = asyncio.run(collect(plugin2.cmd_disable_push(ev4)))
 check("禁用-配置写入", plugin2.config["enable_scheduled_push"] is False and plugin2.scheduler.running is False)
 
 ev5 = FakeEvent(message_str="/dna_启用推送")
-res = asyncio.run(collect(plugin2.enable_push(ev5)))
+res = asyncio.run(collect(plugin2.cmd_enable_push(ev5)))
 check("启用-配置写入并启动", plugin2.config["enable_scheduled_push"] is True and plugin2.scheduler.running is True)
 
 # ---------- 8. 状态与帮助 ----------
 ev6 = FakeEvent(message_str="/dna_状态")
-res = asyncio.run(collect(plugin2.status(ev6)))
-check("状态-包含版本", "2.5.1" in res[0] and "1 个" in res[0])
+res = asyncio.run(collect(plugin2.cmd_status(ev6)))
+check("状态-包含版本", mod.PLUGIN_VERSION in res[0] and "1 个" in res[0])
 ev7 = FakeEvent(message_str="/dna_帮助")
-res = asyncio.run(collect(plugin2.help_cmd(ev7)))
+res = asyncio.run(collect(plugin2.cmd_help(ev7)))
 check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/dna_启用推送", "/dna_禁用推送", "/dna_测试信息"]))
 
 # ---------- 8.5 测试信息指令 ----------
@@ -325,10 +353,10 @@ check("帮助-含全部指令", all(cmd in res[0] for cmd in ["/dna_状态", "/d
 plugin2.config["last_pushed_signature"] = "old-sig"
 async def fake_fetch_for_test():
     return [["X", "Y"], ["Z"], ["W", "V"]]
-plugin2._fetch_missions_from_api = fake_fetch_for_test
+plugin2._fetch_missions = fake_fetch_for_test
 plugin2._render_missions_image = _mock_render_none
 ev8 = FakeEvent(message_str="/dna_测试信息")
-res = asyncio.run(collect(plugin2.test_fetch_info(ev8)))
+res = asyncio.run(collect(plugin2.cmd_test_fetch_info(ev8)))
 res_lines = res[0].split("\n")
 check("测试信息-返回内容", len(res) == 1 and "角色  当前开放" in res[0] and "X" in res_lines and "Y" in res_lines and "魔之楔  当前开放" in res[0])
 check("测试信息-附注变化", "与上次推送不同" in res[0])
@@ -337,7 +365,7 @@ check("测试信息-不改指纹", plugin2.config["last_pushed_signature"] == "o
 # 成功（T2I 可用）：向当前群发送图片 + 文本提示
 ctx.sent.clear()
 plugin2._render_missions_image = fake_render_png
-res = asyncio.run(collect(plugin2.test_fetch_info(ev8)))
+res = asyncio.run(collect(plugin2.cmd_test_fetch_info(ev8)))
 check("测试信息-T2I可用发图",
       len(ctx.sent) == 1 and ctx.sent[0][0] == ev8.unified_msg_origin
       and ctx.sent[0][1].image_base64 == base64.b64encode(fake_png).decode("ascii")
@@ -347,8 +375,8 @@ plugin2._render_missions_image = _mock_render_none
 # API 失败：返回错误提示
 async def fake_fetch_none():
     return None
-plugin2._fetch_missions_from_api = fake_fetch_none
-res = asyncio.run(collect(plugin2.test_fetch_info(ev8)))
+plugin2._fetch_missions = fake_fetch_none
+res = asyncio.run(collect(plugin2.cmd_test_fetch_info(ev8)))
 check("测试信息-失败提示", len(res) == 1 and "失败" in res[0])
 
 # ---------- 9. 内容去重 + 轮询 ----------
@@ -364,7 +392,7 @@ class FetchStub:
         return self.rows
 
 fetch = FetchStub()
-plugin3._fetch_missions_from_api = fetch
+plugin3._fetch_missions = fetch
 plugin3._render_missions_image = _mock_render_none  # 去重测试走文本路径
 sends3 = []
 async def fake_send3(origin, msg):
@@ -499,14 +527,14 @@ check("智能适配-等价判断", plugin7._targets_equal("QQ_BOT:GroupMessage:2
 # 11.7 移除指令：用群号移除完整格式条目
 plugin7.config["whitelist_targets"] = ["QQ_BOT:GroupMessage:111", "222"]
 async def remove_via_group_number():
-    gen = plugin7.remove_whitelist(FakeEvent("dna_移除白名单 111", "QQ_BOT:GroupMessage:111"))
+    gen = plugin7.cmd_remove_whitelist(FakeEvent("dna_移除白名单 111", "QQ_BOT:GroupMessage:111"))
     async for r in gen:
         pass
 asyncio.run(remove_via_group_number())
 check("智能适配-群号移除完整条目", plugin7.config["whitelist_targets"] == ["222"])
 # 11.8 显示指令：完整格式显示为群号
 async def show_via_group():
-    gen = plugin7.show_whitelist(FakeEvent("dna_查看推送群", "QQ_BOT:GroupMessage:111"))
+    gen = plugin7.cmd_show_whitelist(FakeEvent("dna_查看推送群", "QQ_BOT:GroupMessage:111"))
     out = []
     async for r in gen:
         out.append(r)
@@ -525,7 +553,7 @@ async def spy_render(missions):
 plugin10._render_missions_image = spy_render
 plugin10.config["enable_image_push"] = False
 plugin10.config["last_pushed_signature"] = ""
-plugin10._fetch_missions_from_api = fake_fetch
+plugin10._fetch_missions = fake_fetch
 ctx10_sent = []
 async def fake_send10(origin, msg):
     ctx10_sent.append((origin, msg))
@@ -559,13 +587,218 @@ check("图片配置-归一化", cfg12["enable_image_push"] is True and cfg12["t2
 plugin11 = mod.DnaHelperPlugin(FakeContext())
 plugin11.config["enable_image_push"] = False
 plugin11.config["last_pushed_signature"] = "old-sig"
-plugin11._fetch_missions_from_api = fake_fetch_for_test
+plugin11._fetch_missions = fake_fetch_for_test
 render_called["n"] = 0
 plugin11._render_missions_image = spy_render
 ev11 = FakeEvent(message_str="/dna_测试信息")
-res11 = asyncio.run(collect(plugin11.test_fetch_info(ev11)))
+res11 = asyncio.run(collect(plugin11.cmd_test_fetch_info(ev11)))
 check("测试信息-图片开关关闭不出图", render_called["n"] == 0
       and len(res11) == 1 and "角色" in res11[0] and "与上次推送不同" in res11[0])
+
+# ---------- 8.5 v2.7.0 官方直连：签名工具 ----------
+import hashlib as _hashlib
+# 确定性验证 sign_shuffled：params 固定 → md5 可手算
+_sig = mod._sign_shuffled({"a": "1", "b": "x"}, "RK")
+_md5 = _hashlib.md5(b"a=1&b=x&RK").hexdigest().upper()
+_chars = list(_md5)
+_chars[1], _chars[13] = _chars[13], _chars[1]
+_chars[5], _chars[17] = _chars[17], _chars[5]
+_chars[7], _chars[23] = _chars[23], _chars[7]
+check("签名-shuffled 与手算一致", _sig == "".join(_chars))
+_sig2 = mod._sign_shuffled({"a": "1", "empty": "", "c": None}, "RK")
+check("签名-空值剔除", _sig2 == mod._sign_shuffled({"a": "1"}, "RK"))
+_sa = mod._build_sa_header("0" * 30, 1704680560996)
+check("签名-sa 长度 43", len(_sa) == 43)
+_sa2 = mod._build_sa_header("123456789012345678901234567890", 1000000000000)
+check("签名-sa 数字+时间戳混合", _sa2.isdigit() and "10000" in _sa2)
+_xor = mod._xor_encode("ab", "k")
+check("签名-xor 字节值相加格式", _xor == "@204@205")  # ord('a')+ord('k')=204, ord('b')+ord('k')=205
+check("签名-rand_digit_str 仅数字", mod._rand_digit_str(30).isdigit())
+check("签名-rand_str 长度", len(mod._rand_str(16)) == 16)
+# RSA 加密在无 pycryptodome 环境跳过（服务器容器内已确认 3.23.0 可用）
+try:
+    _rk = mod._rsa_encrypt("x", mod.DNA_RSA_FALLBACK_KEY)
+    check("签名-RSA 可加密", len(_rk) > 0)
+except Exception as _e:
+    print("[SKIP] 签名-RSA 本地无 pycryptodome:", _e)
+
+# ---------- 8.6 v2.7.0 官方 API：响应解析与转换 ----------
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+    def get(self, k, d=None):
+        return self._payload.get(k, d)
+
+def _mk_resp(success=True, code=0, data=None):
+    return {"success": success, "code": code, "msg": "ok", "data": data}
+
+async def _fake_post(path, headers, payload, rsa=True):
+    # 按路径返回固定响应
+    if path == mod.DNA_PATH_ROLE_FOR_TOOL:
+        return _mk_resp(data={"instanceInfo": [
+            {"instances": [{"id": 1, "name": "探险/无尽"}, {"id": 2, "name": "调停"}]},
+            {"instances": [{"id": 3, "name": "拆解"}]},
+            {"instances": [{"id": 4, "name": "避险"}]},
+        ]})
+    if path == mod.DNA_PATH_LOGIN:
+        return _mk_resp(data={"token": "TOK", "refreshToken": "RT", "dNum": "D1"})
+    if path == mod.DNA_PATH_REFRESH:
+        return _mk_resp(data={"token": "TOK2", "dNum": "D2"})
+    if path == mod.DNA_PATH_SMS:
+        return _mk_resp()
+    return _mk_resp()
+
+_api = mod.DNAOfficialAPI()
+_api._post = _fake_post
+_api._rsa_public_key = lambda: mod.DNA_RSA_FALLBACK_KEY
+
+_rows = asyncio.run(_api.fetch_missions("T", "DEV"))
+check("官方-密函三行转换", _rows == [["探险/无尽", "调停"], ["拆解"], ["避险"]])
+_cred = asyncio.run(_api.login("13800000000", "123456", "DEV"))
+check("官方-登录凭据解析", _cred == {"token": "TOK", "refresh_token": "RT", "d_num": "D1"})
+_rn = asyncio.run(_api.refresh("T", "RT", "DEV"))
+check("官方-续期解析", _rn == {"token": "TOK2", "d_num": "D2"})
+check("官方-设备码格式", mod.DNAOfficialAPI.new_dev_code().startswith("2") and len(mod.DNAOfficialAPI.new_dev_code()) == 33)
+# 失败响应
+_api_fail = mod.DNAOfficialAPI()
+async def _fake_post_fail(path, headers, payload, rsa=True):
+    return _mk_resp(success=False, code=-999)
+_api_fail._post = _fake_post_fail
+check("官方-失败响应返回None", asyncio.run(_api_fail.fetch_missions("T", "DEV")) is None)
+check("官方-失败响应登录None", asyncio.run(_api_fail.login("m", "c", "d")) is None)
+
+# ---------- 8.7 v2.7.0 数据源策略：官方优先 + 第三方兜底 ----------
+_plugin_src = mod.DnaHelperPlugin(ctx)
+async def _official_ok():
+    return [["官方A"], ["官方B"], ["官方C"]]
+async def _official_none():
+    return None
+async def _third_ok():
+    return [["代理A"], ["代理B"], ["代理C"]]
+async def _third_none():
+    return None
+
+_plugin_src._fetch_missions_official = _official_ok
+_plugin_src._fetch_missions_from_third_party = _third_ok
+_plugin_src.config["dna_source_prefer_official"] = True
+check("策略-官方优先命中", asyncio.run(_plugin_src._fetch_missions()) == [["官方A"], ["官方B"], ["官方C"]])
+_plugin_src._fetch_missions_official = _official_none
+check("策略-官方失败回退第三方", asyncio.run(_plugin_src._fetch_missions()) == [["代理A"], ["代理B"], ["代理C"]])
+_plugin_src._fetch_missions_from_third_party = _third_none
+check("策略-全部失败返回None", asyncio.run(_plugin_src._fetch_missions()) is None)
+_plugin_src.config["dna_source_prefer_official"] = False
+_plugin_src._fetch_missions_official = _official_ok
+_plugin_src._fetch_missions_from_third_party = _third_ok
+check("策略-关闭官方优先走代理", asyncio.run(_plugin_src._fetch_missions()) == [["代理A"], ["代理B"], ["代理C"]])
+
+# ---------- 8.8 v2.7.0 账号绑定/解绑/轮询 ----------
+_pa = mod.DnaHelperPlugin(ctx)
+_ok1 = _pa.bind_official_account("u1", "13800000000", "T1", "R1", "D1", "DEV1")
+_ok2 = _pa.bind_official_account("u1", "13800000000", "T1b", "R1", "D1", "DEV1")
+check("账号-绑定成功", _ok1 and _ok2 and len(_pa.config["dna_accounts"]) == 1)
+check("账号-重复绑定覆盖", _pa.config["dna_accounts"][0]["token"] == "T1b")
+_ok3 = _pa.bind_official_account("u2", "13900000000", "T2", "", "D2", "DEV2")
+check("账号-多账号共存", len(_pa.config["dna_accounts"]) == 2)
+check("账号-解绑", _pa.unbind_official_account("u1") and len(_pa.config["dna_accounts"]) == 1)
+check("账号-解绑不存在返回False", _pa.unbind_official_account("nobody") is False)
+
+# 轮询：账号1 token 失效→refresh 成功但仍失败→标记无效→轮到账号2 命中
+_api_chain = []
+async def _chain_fetch(token, dev_code):
+    _api_chain.append(token)
+    if token == "T2":
+        return [["X"], ["Y"], ["Z"]]
+    return None
+async def _chain_refresh(token, refresh_token, dev_code):
+    return {"token": "T1_NEW", "d_num": "D"}
+_poll = mod.DnaHelperPlugin(ctx)
+_poll.config["dna_accounts"] = [
+    {"user_id": "a", "mobile": "13800000000", "token": "T1", "refresh_token": "R1",
+     "d_num": "", "dev_code": "D1", "status": "正常"},
+    {"user_id": "b", "mobile": "13900000000", "token": "T2", "refresh_token": "R2",
+     "d_num": "", "dev_code": "D2", "status": "正常"},
+]
+_poll_api = mod.DNAOfficialAPI()
+_poll_api.fetch_missions = _chain_fetch
+_poll_api.refresh = _chain_refresh
+# 拆分后：插件内部经 dna_plugin 模块取 DNAOfficialAPI，须替换该模块属性（main 转发名无效）
+import dna_plugin as _dp_mod
+_orig_api_cls = _dp_mod.DNAOfficialAPI
+_dp_mod.DNAOfficialAPI = lambda: _poll_api
+res_poll = asyncio.run(_poll._fetch_missions_official())
+check("轮询-账号1失效挂起轮到账号2", res_poll == [["X"], ["Y"], ["Z"]] and _api_chain == ["T1", "T1_NEW", "T2"])
+check("轮询-账号1续期仍失败标记无效", _poll.config["dna_accounts"][0]["status"] == "无效")
+check("轮询-账号2保持有效", _poll.config["dna_accounts"][1]["status"] == "正常")
+_dp_mod.DNAOfficialAPI = _orig_api_cls  # 恢复（测试尾部无更多官方调用依赖原类）
+
+# ---------- 8.9 v2.7.0 登录会话与命令 ----------
+_login_plugin = mod.DnaHelperPlugin(ctx)
+_auth = asyncio.run(_login_plugin._login_server.create_session({"user_id": "u9", "origin": "o"}))
+check("登录-会话创建", _auth and len(_auth) >= 24)
+_sess = _login_plugin._login_server._session(_auth)
+check("登录-会话可查", _sess is not None and _sess["actor"]["user_id"] == "u9")
+_login_plugin._login_server._sessions[_auth]["at"] = 0  # 过期
+check("登录-过期会话失效", _login_plugin._login_server._session(_auth) is None)
+
+# 命令：dna_登录 生成链接（登录服务未启动也正常）
+_ev_login = FakeEvent(message_str="/dna_登录", unified_msg_origin="QQ_BOT:GroupMessage:9")
+_res_login = asyncio.run(collect(_login_plugin.cmd_dna_login(_ev_login)))
+check("命令-登录链接", len(_res_login) == 1 and "/dna_login/" in _res_login[0] and "8899" in _res_login[0])
+# 命令：dna_账号 / dna_登出（sender_id 绑定/解绑）
+_bind_plugin = mod.DnaHelperPlugin(ctx)
+_bind_plugin.config["dna_accounts"] = []  # 隔离：清空前序测试写入文件的账号
+_bind_plugin.bind_official_account("u99", "13800000000", "T", "R", "D", "DEV")
+_ev_acc = FakeEvent(message_str="/dna_账号")
+_res_acc = asyncio.run(collect(_bind_plugin.cmd_dna_accounts(_ev_acc)))
+check("命令-账号列表脱敏", len(_res_acc) == 1 and "138****0000" in _res_acc[0] and "正常" in _res_acc[0])
+_ev_out = FakeEvent(message_str="/dna_登出", sender_id="u99")
+_res_out = asyncio.run(collect(_bind_plugin.cmd_dna_logout(_ev_out)))
+check("命令-登出解绑", len(_res_out) == 1 and "已解绑" in _res_out[0]
+      and len(_bind_plugin.config["dna_accounts"]) == 0)
+# 未绑定账号登出提示
+_ev_out2 = FakeEvent(message_str="/dna_登出", sender_id="nobody")
+_res_out2 = asyncio.run(collect(_bind_plugin.cmd_dna_logout(_ev_out2)))
+check("命令-未绑定登出提示", len(_res_out2) == 1 and "未绑定" in _res_out2[0])
+# 命令：dna_绑定状态（v2.7.5 本人绑定状态/未绑定提示）
+_bind_plugin.config["dna_accounts"] = []
+_bind_plugin.bind_official_account("u99", "13800000000", "T", "R", "D", "DEV")
+_bind_plugin.config["dna_accounts"][0]["notified_invalid"] = True  # 模拟已发失效提醒
+_ev_bs = FakeEvent(message_str="/dna_绑定状态", sender_id="u99")
+_res_bs = asyncio.run(collect(_bind_plugin.cmd_dna_bind_status(_ev_bs)))
+check("命令-绑定状态已绑定", len(_res_bs) == 1 and "138****0000" in _res_bs[0]
+      and "凭证正常" in _res_bs[0])
+_ev_bs2 = FakeEvent(message_str="/dna_绑定状态", sender_id="nobody")
+_res_bs2 = asyncio.run(collect(_bind_plugin.cmd_dna_bind_status(_ev_bs2)))
+check("命令-绑定状态未绑定提示", len(_res_bs2) == 1 and "未绑定" in _res_bs2[0])
+
+# ---------- 8.10 v2.7.1 验证码环节（反代白名单/重写/SW 路由） ----------
+check("验证码-白名单含三主机", mod.DNA_CAPTCHA_HOSTS == frozenset(
+    {"captcha.alicaptcha.com", "captchabak.alicaptcha.com", "static.alicaptcha.com"}))
+check("验证码-Android UA 画像", "Android 12" in mod.DNA_ANDROID_UA_ALICAP
+      and "Mobile Safari" in mod.DNA_ANDROID_UA_ALICAP)
+_srv = mod.DNALoginServer(_login_plugin)
+try:
+    import httpx  # noqa: F401
+
+    _loc_ok = _srv._rewrite_redirect_location(
+        "https://captcha.alicaptcha.com/cap/next?a=1&b=%2F",
+        "https://captcha.alicaptcha.com/x", "AUTH1")
+    check("验证码-白名单跳转重写", _loc_ok == "/dna_login/alicap/AUTH1/captcha.alicaptcha.com/cap/next?a=1&b=%2F")
+    _loc_bad = _srv._rewrite_redirect_location("https://evil.example.com/x", "https://captcha.alicaptcha.com/x", "A")
+    check("验证码-非白名单跳转拒绝", _loc_bad is None)
+    _loc_bad2 = _srv._rewrite_redirect_location("https://captcha.alicaptcha.com:8443/x", "https://captcha.alicaptcha.com/x", "A")
+    check("验证码-非 443 端口拒绝", _loc_bad2 is None)
+except ImportError:
+    print("[SKIP] 验证码-跳转重写（本地无 httpx，服务器验证）")
+check("验证码-SW 注册脚本含反代前缀", "/alicap/" in mod.DNA_SW_JS and "dna_login" in mod.DNA_SW_JS
+      and "captcha.alicaptcha.com" in mod.DNA_SW_JS)
+check("验证码-登录页含 ct4 加载", "dnabbs.yingxiong.com/lib/ct4.js" in mod.LOGIN_PAGE_HTML
+      and "clientType:\"android\"" in mod.LOGIN_PAGE_HTML)
+check("验证码-登录页含 hook", "rewriteAlicap" in mod.LOGIN_PAGE_HTML
+      and "serviceWorker" in mod.LOGIN_PAGE_HTML)
+check("验证码-登录页排版加固", ".row>div{flex:1 1 auto;min-width:0}" in mod.LOGIN_PAGE_HTML
+      and "flex:0 0 auto" in mod.LOGIN_PAGE_HTML
+      and "flex-wrap:nowrap" in mod.LOGIN_PAGE_HTML)
 
 # ---------- 清理 ----------
 if os.path.exists(cfg_path):

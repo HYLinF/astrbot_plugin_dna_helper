@@ -38,5 +38,35 @@
     "type": "string",
     "default": "",
     "invisible": true
+  },
+  "dna_login_bind_host": {
+    "description": "官方直连登录页绑定地址（默认仅本机可访问）",
+    "type": "string",
+    "default": "127.0.0.1",
+    "hint": "登录页 HTTP 服务监听地址。默认 127.0.0.1 表示仅本机可访问，安全。如需群友都能登录，可改为 0.0.0.0（此时务必同时填好下面的公开地址并放行端口）。"
+  },
+  "dna_login_port": {
+    "description": "官方直连登录页端口",
+    "type": "int",
+    "default": 8899,
+    "hint": "登录页监听端口，默认 8899。请确保该端口未被占用，且（如需外网访问）已在防火墙/云安全组放行。"
+  },
+  "dna_login_public_url": {
+    "description": "登录页公开访问地址（留空自动按绑定地址生成）",
+    "type": "string",
+    "default": "",
+    "hint": "群友访问登录页使用的公网地址，例如 http://<公网IP>:8899。留空则按 http://<绑定地址>:<端口> 生成提示；填了则群内展示该地址（请确保端口已放行）。"
+  },
+  "dna_source_prefer_official": {
+    "description": "数据源策略：官方直连优先（失效自动回退第三方代理）",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后：有有效官方登录凭据时，优先直连官方拉取密函；所有凭据失效或无绑定账号时，自动回退现有第三方代理（api.dna-builder.cn）。关闭则始终只用第三方代理。"
+  },
+  "dna_accounts": {
+    "description": "已绑定官方账号凭据列表（由登录页登录写入，请勿手工编辑）",
+    "type": "list",
+    "default": [],
+    "invisible": true
   }
 }

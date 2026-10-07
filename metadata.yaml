@@ -1,7 +1,7 @@
 name: astrbot_plugin_dna_helper
 author: HYLinF
-version: 2.5.1
-description: 二重螺旋（DNA）密函委托定时推送插件
+version: 2.6.0
+description: 二重螺旋（DNA）密函委托定时推送插件（官方直连登录 + 第三方代理兜底）
 repository: https://github.com/HYLinF/astrbot_plugin_dna_helper
 tags:
   - 游戏
