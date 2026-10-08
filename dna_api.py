@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import random
 import secrets
 import time
@@ -312,12 +313,36 @@ class DNAOfficialAPI:
         return {"token": new_token, "d_num": d_num}
 
     # ---------- 密函 ----------
-    async def fetch_missions(self, token: str, dev_code: str) -> list | None:
-        """defaultRoleForTool(type=1) 拉当前密函；返回三行列表或 None。"""
+    @staticmethod
+    def _jwt_user_id(token: str) -> int | None:
+        """从官方 token（JWT）payload 解出 userId；token 非 JWT 或解码失败返回 None。"""
+        try:
+            payload = token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload))
+            uid = data.get("userId")
+            if isinstance(uid, int):
+                return uid
+            if isinstance(uid, str) and uid.isdigit():
+                return int(uid)
+            return None
+        except Exception:
+            return None
+
+    async def fetch_missions(self, token: str, dev_code: str, user_id: int | None = None) -> list | None:
+        """defaultRoleForTool(type=1) 拉当前密函；返回三行列表或 None。
+
+        官方接口自 1.3.x 起强制要求请求体携带 userId：未显式传入时从 token
+        JWT payload 解出；解不出则退回不带 userId（兼容旧版接口）。
+        """
+        payload: dict[str, Any] = {"type": 1}
+        uid = user_id if user_id is not None else self._jwt_user_id(token)
+        if uid is not None:
+            payload["userId"] = uid
         resp = await self._post(
             DNA_PATH_ROLE_FOR_TOOL,
             self._base_header(dev_code=dev_code, token=token),
-            {"type": 1},
+            payload,
             rsa=True,
         )
         if not self._ok(resp):

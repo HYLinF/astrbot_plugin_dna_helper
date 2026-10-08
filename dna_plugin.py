@@ -622,18 +622,22 @@ class DnaHelperPlugin(Star):
                 return rows
             # token 失效 → 尝试 refreshToken 续期一次
             refresh_token = str(acc.get("refresh_token") or "")
+            renewed = None
             if refresh_token:
                 renewed = await api.refresh(token, refresh_token, dev_code)
-                if renewed:
-                    acc["token"] = renewed["token"]
-                    if renewed.get("d_num"):
-                        acc["d_num"] = renewed["d_num"]
-                    acc["status"] = DNA_ACCOUNT_OK
-                    acc["notified_invalid"] = False  # 续期成功 → 清除失效提醒标记
-                    changed = True
-                    rows = await api.fetch_missions(renewed["token"], dev_code)
-                    if rows is not None:
-                        return rows
+            if renewed:
+                acc["token"] = renewed["token"]
+                if renewed.get("d_num"):
+                    acc["d_num"] = renewed["d_num"]
+                acc["status"] = DNA_ACCOUNT_OK
+                acc["notified_invalid"] = False  # 续期成功 → 清除失效提醒标记
+                changed = True
+                rows = await api.fetch_missions(renewed["token"], dev_code)
+                if rows is not None:
+                    return rows
+                # 续期成功说明凭据有效；数据仍取不到属官方侧暂时异常，不判失效，本轮走第三方兜底
+                logger.warning("官方直连凭据有效但密函数据暂不可用，本轮尝试其他账号/回退第三方")
+                continue
             if acc.get("status") != DNA_ACCOUNT_INVALID:
                 acc["status"] = DNA_ACCOUNT_INVALID
                 changed = True
